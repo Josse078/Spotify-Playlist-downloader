@@ -23,10 +23,6 @@ See the script in action below:
 
 ![Project Demo](https://github.com/Josse078/Spotify-Playlist-downloader/blob/main/demo.gif)
 
-> 💡 **Tip:** If you are hosting this project on GitHub, you can drag and drop your screen recording file directly into this section of the Markdown file to display an embedded video player.
-
----
-
 ## 🧠 How It Works (The Core Logic)
 
 The script bridges two independent web architectures together without requiring developer access keys. It follows a clean 4-step pipeline:
