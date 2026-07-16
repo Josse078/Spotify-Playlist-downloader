@@ -1,57 +1,51 @@
-import requests
-import base64
-import yt_dlp
-from moviepy.editor import *
 import os
-from dotenv import load_dotenv  
+import yt_dlp
+from spotify_scraper import SpotifyClient  
 
-load_dotenv()
-
-CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
-CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
-
-if not CLIENT_ID or not CLIENT_SECRET:
-    raise EnvironmentError("Missing Spotify API credentials in environment variables.")
-
-def get_playlist_name(playlist_id, token):
-    url = f"https://api.spotify.com/v1/playlists/{playlist_id}"
-    headers = {"Authorization": f"Bearer {token}"}
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    return response.json()['name']
-
-def get_access_token(client_id, client_secret):
-    auth_string = f'{client_id}:{client_secret}'
-    b64_auth_string = base64.b64encode(auth_string.encode()).decode()
-    headers = {"Authorization": f'Basic {b64_auth_string}'}
-    data = {'grant_type': 'client_credentials'}
-    response = requests.post('https://accounts.spotify.com/api/token', headers=headers, data=data)
-    response.raise_for_status()
-    return response.json()['access_token']
-
-def get_playlist_tracks(playlist_id, access_token):
-    url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks"
-    headers = {"Authorization": f"Bearer {access_token}"}
-    tracks = []
-    while url:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        if 'items' not in data:
-            raise KeyError(f"'items' key not found in API response: {data}")
-        for item in data['items']:
-            track = item['track']
+def get_playlist_tracks_free(playlist_url):
+    """Fetches playlist metadata and tracks completely keyless using spotifyscraper."""
+    print("Extracting tracklist anonymously...")
+    
+    try:
+        client = SpotifyClient()
+        playlist = client.get_playlist(playlist_url)
+        
+        # Access properties directly from the custom Playlist object
+        playlist_name = playlist.name
+        tracks = []
+        
+        # Loop through PlaylistTrack items
+        for entry in playlist.tracks:
+            # Safely extract the inner track object
+            track = entry.track
             if track:
-                track_name = track['name']
-                artist_names = ", ".join(artist['name'] for artist in track['artists'])
-                tracks.append(f"{track_name} by {artist_names}")
-        url = data.get('next')
-    return tracks
+                track_name = track.name
+                # Extract the name from each artist object in the list
+                artists = ", ".join(artist.name for artist in track.artists)
+                
+                if track_name and artists:
+                    tracks.append(f"{track_name} by {artists}")
+                elif track_name:
+                    tracks.append(track_name)
+                    
+        return playlist_name, tracks
+    except Exception as e:
+        raise RuntimeError(f"Could not read playlist. Make sure it is PUBLIC. Error: {e}")
 
 def get_first_youtube_link(search_query):
-    with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
-        info = ydl.extract_info(f"ytsearch1:{search_query}", download=False)
-        return info['entries'][0]['webpage_url']
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': True,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        try:
+            info = ydl.extract_info(f"ytsearch1:{search_query}", download=False)
+            if 'entries' in info and len(info['entries']) > 0:
+                return info['entries'][0]['url']
+        except Exception as e:
+            print(f"  ↳ Search failed for '{search_query}': {e}")
+    return None
 
 def download_video(video_url, output_path):
     ydl_opts = {
@@ -68,33 +62,37 @@ def download_video(video_url, output_path):
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([video_url])
 
-def extract_playlist_id(input_string):
-    if not input_string:
-        raise ValueError("Input cannot be empty.")
-    if 'open.spotify.com/playlist/' in input_string:
-        playlist_id = input_string.split('playlist/')[1].split('?')[0]
-    else:
-        playlist_id = input_string.strip().split('?')[0]
-    if not playlist_id or len(playlist_id) != 22:
-        raise ValueError("Invalid playlist ID format")
-    return playlist_id
-
 def main():
-    user_input = input("Enter the Spotify Playlist URL or ID: ")
-    playlist_id = extract_playlist_id(user_input)
-    token = get_access_token(CLIENT_ID, CLIENT_SECRET)
-    name = get_playlist_name(playlist_id, token)
-    result_path = os.path.join("Result", name)
+    user_input = input("Enter PUBLIC Spotify Playlist URL: ").strip()
+    if not user_input:
+        print("Input cannot be empty.")
+        return
+        
+    try:
+        playlist_name, track_list = get_playlist_tracks_free(user_input)
+    except Exception as e:
+        print(e)
+        return
+
+    print(f"\nFound Playlist: '{playlist_name}'")
+    result_path = os.path.join("Result", playlist_name)
     os.makedirs(result_path, exist_ok=True)
-    track_list = get_playlist_tracks(playlist_id, token)
+    
+    print(f"Tracks found: {len(track_list)}\n" + "-"*40)
+    
     for idx, track in enumerate(track_list, start=1):
+        print(f"[{idx}/{len(track_list)}] Searching: {track}")
         link = get_first_youtube_link(track)
+        
+        if not link:
+            print("  ↳ Skipping: No results.")
+            continue
+            
         try:
             download_video(link, result_path)
-            print(f'Downloaded: {track}')
+            print(f'  ↳ Success!')
         except Exception as e:
-            print(f"Error downloading {track}: {e}")
-        print(f'{idx}. {track} : {link}')
+            print(f"  ↳ Download Error: {e}")
 
 if __name__ == '__main__':
     main()
